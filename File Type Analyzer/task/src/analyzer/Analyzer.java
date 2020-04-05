@@ -1,78 +1,42 @@
 package analyzer;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 public class Analyzer {
-    private Path file;
-    private Map<String, String> patternTypes = new HashMap<>();
+    private List<FileTypePattern> patterns = new ArrayList<>();
 
-    private List<String> result;
-
-    private final ExecutorService pool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-
-
-    public void setFile(String fileName) {
-        file = Path.of(fileName);
+    public void addPattern(FileTypePattern pattern) {
+        patterns.add(pattern);
     }
 
-    public List<String> getResult() {
-        return result;
+    public String analyze(byte[] bytes, String fileName) {
+        return kmp(bytes, fileName);
     }
 
-    public void addPattern(String pattern, String fileType) {
-        patternTypes.put(pattern, fileType);
-    }
+    private String kmp(byte[] bytes, String fileName) {
+        FileTypePattern res = null;
+        for (var pattern : patterns) {
+            var regexBytes = pattern.getRegex().getBytes();
+            var prefix = getPrefix(regexBytes);
 
-    public void analyze() throws IOException, InterruptedException {
-        result = new ArrayList<>();
-        try (var walk = Files.walk(file)) {
-            walk.filter(Files::isRegularFile)
-                    .map(path -> (Runnable) () -> kmp(path))
-                    .forEach(pool::submit);
-        }
-        pool.shutdown();
-        while (!pool.isTerminated()) {
-            pool.awaitTermination(10, TimeUnit.SECONDS);
-        }
-    }
-
-    private void kmp(Path path) {
-        var res = path.getFileName().toString() + ": ";
-        try {
-            var bytes = Files.readAllBytes(path);
-            for (String pattern : patternTypes.keySet()) {
-                var patternBytes = pattern.getBytes();
-                var prefix = getPrefix(patternBytes);
-
-                int j = 0;
-                for (int i = 0; i < bytes.length; i++) {
-                    while (j > 0 && bytes[i] != patternBytes[j]) {
-                        j = prefix[j - 1];
-                    }
-                    if (bytes[i] == patternBytes[j]) {
-                        j += 1;
-                    }
-                    if (j == patternBytes.length) {
-                        res +=  patternTypes.get(pattern);
-                        result.add(res);
-                        return;
+            int j = 0;
+            for (byte aByte : bytes) {
+                while (j > 0 && aByte != regexBytes[j]) {
+                    j = prefix[j - 1];
+                }
+                if (aByte == regexBytes[j]) {
+                    j += 1;
+                }
+                if (j == regexBytes.length) {
+                    if (res == null || res.getPrio() < pattern.getPrio()) {
+                        res = pattern;
+                        break;
                     }
                 }
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         }
-        res += "Unknown file type";
-        result.add(res);
+        return res == null ? fileName + ": Unknown file type" : fileName + ": " + res.getName();
     }
 
     private int[] getPrefix(byte[] bytes) {
